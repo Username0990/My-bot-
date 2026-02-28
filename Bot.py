@@ -1,63 +1,60 @@
-import asyncio
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message
-from aiogram.filters import Command
-import json
 import os
+import json
+import requests
+from flask import Flask, request
 
-TOKEN = "7520071050:AAHh-HgTGESpL6aOhwi7QJDF92gId9pavys"
-ALLOWED_CHAT_ID = -2550160088  # ID нужного чата
+# Получаем токен из переменной окружения (Scalingo)
+TOKEN = os.environ.get("BOT_TOKEN")
+API_URL = f"https://api.telegram.org/bot{TOKEN}/"
 
-bot = Bot(token=TOKEN)
-dp = Dispatcher()
+# Хранилище триггеров
+if os.path.exists("triggers.json"):
+    with open("triggers.json", "r") as f:
+        triggers = json.load(f)
+else:
+    triggers = {}
 
-TRIGGERS_FILE = "triggers.json"
+app = Flask(__name__)
 
-# Загрузка триггеров
-def load_triggers():
-    if os.path.exists(TRIGGERS_FILE):
-        with open(TRIGGERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+def save_triggers():
+    with open("triggers.json", "w") as f:
+        json.dump(triggers, f)
 
-# Сохранение
-def save_triggers(data):
-    with open(TRIGGERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+def send_message(chat_id, text):
+    requests.post(f"{API_URL}sendMessage", data={"chat_id": chat_id, "text": text})
 
-triggers = load_triggers()
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = request.get_json()
+    if "message" in update:
+        msg = update["message"]
+        chat_id = msg["chat"]["id"]
+        text = msg.get("text", "")
 
-# Команда добавления триггера
-@dp.message(Command("addtrigger"))
-async def add_trigger(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID:
-        return
+        # Добавление триггера через ЛС бота
+        if text.startswith("/addtrigger"):
+            try:
+                _, payload = text.split(" ", 1)
+                trigger, response = payload.split("|", 1)
+                triggers[trigger.strip()] = response.strip()
+                save_triggers()
+                send_message(chat_id, f"✅ Триггер добавлен:\n{trigger.strip()} → {response.strip()}")
+            except ValueError:
+                send_message(chat_id, "❌ Используй: /addtrigger триггер | ответ")
+            return "ok"
 
-    try:
-        text = message.text.replace("/addtrigger ", "")
-        trigger, response = text.split("|", 1)
-        trigger = trigger.strip().lower()
-        response = response.strip()
+        # Автоответ
+        for trig, resp in triggers.items():
+            if trig.lower() in text.lower():
+                send_message(chat_id, resp)
+                break
 
-        triggers[trigger] = response
-        save_triggers(triggers)
+    return "ok"
 
-        await message.answer("✅ Триггер добавлен!")
-    except:
-        await message.answer("Используй формат:\n/addtrigger слово | ответ")
-
-# Автоответ
-@dp.message(F.text)
-async def auto_reply(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID:
-        return
-
-    text = message.text.lower()
-    if text in triggers:
-        await message.answer(triggers[text])
-
-async def main():
-    await dp.start_polling(bot)
+@app.route("/")
+def index():
+    return "Bot is running"
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
