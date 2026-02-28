@@ -1,2 +1,4 @@
-Flask
-requests
+Flask==3.0.3
+pyTelegramBotAPI==4.22.1
+psycopg2-binary==2.9.10
+gunicorn==23.0.0
